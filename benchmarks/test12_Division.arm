@@ -1,0 +1,158 @@
+// Serial division, for 32-bit signed numbers - see Chapter 3.4 in the book.
+// Requires:
+//  ADDI, ADDS, B, B.LT, CBZ, LSL, LSR, MUL, SUBS instructions
+// Expected results:
+// X0: 469 (The value to be divided)
+// X1: 13  (What we are dividing by)
+// X2: 36  (X0/X1)
+// X3: 1   (the remainder)
+// X8: 1   (flag that shows if self-test worked)
+//
+// divide(int dividend, int divisor) { // dividend = quotient * divisor + remainder
+//   int quotient = 0;
+//   int remainder = abs(dividend);
+//   int n_divisor = abs(divisor) << 32;
+//
+//   for(int i=33; i>0; i--) {   
+//     remainder -= n_divisor;
+//     quotient << 1;
+//     if (remainder >= 0) quotient++;
+//     else remainder += n_divisor;
+//     n_divisor >> 1;
+//   }
+//   if (divisor < 0) {
+//     remainder *= -1;
+//     if (dividend > 0) quotient *= -1; // Different signs.
+//   } else if (dividend < 0) quotient *= -1;
+//   // Self test:
+//   int temp = quotient * divisor + remainder
+//   bool verified = (temp == dividend)
+// }
+
+
+
+//ADDI: I-type, Reg[Rd] = Reg[Rn] + {'0, Imm12}
+//OP         Imm12        Rn    Rd
+//3322222222 221111111111 00000 00000
+//1098765432 109876543210 98765 43210
+//1001000100 Unsigned     0..31 0..31
+
+//ADDS: R-type, Reg[Rd] = Reg[Rn] + Reg[Rm]
+//OP          Rm    Shamt  Rn    Rd
+//33222222222 21111 111111 00000 00000
+//10987654321 09876 543210 98765 43210
+//10101011000 0..31 000000 0..31 0..31
+
+//B: B-type, PC = PC + SignExtend({Imm26, 2'b00})
+//OP     Imm26
+//332222 22222211111111110000000000
+//109876 54321098765432109876543210
+//000101 2's Comp Imm26
+
+//B.cond: CB-type, if (flags meet condition) PC = PC + SignExtend({Imm19, 2'b00})
+//OP       Imm19               Cond
+//33222222 2222111111111100000 00000
+//10987654 3210987654321098765 43210
+//01010100 2's Comp Imm19      0..15
+// Cond  Name Meaning after SUBS FlagTest
+// 01011 LT   	Signed <     	 N!=V
+
+//CBZ: CB-type, if (R[Rt] == 0) PC = PC + SignExtend({Imm19, 2'b00})
+//OP       Imm19               Rt
+//33222222 2222111111111100000 00000
+//10987654 3210987654321098765 43210
+//10110100 2's Comp Imm19      0..31
+
+//LSL: R-type, Reg[Rd] = Reg[Rn] << shamt
+//OP          Rm    Shamt  Rn    Rd
+//33222222222 21111 111111 00000 00000
+//10987654321 09876 543210 98765 43210
+//11010011011 00000 0...63 0..31 0..31
+
+//LSR: R-type, Reg[Rd] = Reg[Rn] >> shamt (no sign extend)
+//OP          Rm    Shamt  Rn    Rd
+//33222222222 21111 111111 00000 00000
+//10987654321 09876 543210 98765 43210
+//11010011010 00000 0...63 0..31 0..31
+
+//MUL: R-type, Reg[Rd] = (Reg[Rn] * Reg[Rm])[63:0]
+//OP          Rm    Shamt  Rn    Rd
+//33222222222 21111 111111 00000 00000
+//10987654321 09876 543210 98765 43210
+//10011011000 0..31 011111 0..31 0..31
+
+//SUBS: R-type, Reg[Rd] = Reg[Rn] - Reg[Rm]
+//OP          Rm    Shamt  Rn    Rd
+//33222222222 21111 111111 00000 00000
+//10987654321 09876 543210 98765 43210
+//11101011000 0..31 000000 0..31 0..31
+
+					//MAIN:
+1001000100_000111010101_11111_00000	// 000: ADDI X0, X31, #469	// X0: dividend, an input
+1001000100_000000001101_11111_00001	// 004: ADDI X1, X31, #13	// X1: divisor, an input
+1001000100_000000000000_11111_00010	// 008: ADDI X2, X31, #0	// X2: quotient = 0
+									// X3: remainder = abs(dividend)
+1001000100_000000000000_00000_00011	// 012: ADDI X3, X0, #0		//   X3 = dividend
+11101011000_00000_000000_11111_11111	// 016: SUBS X31, X31, X0	//   is dividend > 0?
+01010100_0000000000000000011_01011	// 020: B.LT DEND_WAS_POS	//   If so, done with abs value
+1001000100_000000000000_11111_11111	// 024: ADDI X31, X31, #0	//   NOOP
+11101011000_00000_000000_11111_00011	// 028: SUBS X3, X31, X0	//   X3 = -dividend
+					//DEND_WAS_POS:
+									// X4: n_divisor = abs(divisor)
+1001000100_000000000000_00001_00100	// 032: ADDI X4, X1, #0		//   X4 = divisor
+11101011000_00001_000000_11111_11111	// 036: SUBS X31, X31, X1	//   is divisor > 0?
+01010100_0000000000000000011_01011	// 040: B.LT DSOR_WAS_POS	//   If so, done with abs value
+1001000100_000000000000_11111_11111	// 044: ADDI X31, X31, #0	//   NOOP
+11101011000_00001_000000_11111_00100	// 048: SUBS X4, X31, X1	//   X4 = -divisor
+					//DSOR_WAS_POS:
+11010011011_00000_100000_00100_00100	// 052: LSL X4, X4, #32		// Start n_divisor *2^32
+1001000100_000000100001_11111_00101	// 056: ADDI X5, X31, #32	// X5: for(i = 33;
+1001000100_000000000001_11111_00110	// 060: ADDI X6, X31, #1	// X6: constant 1, for decrementing
+					//LOOP_TOP:
+11101011000_00100_000000_00011_00011	// 064: SUBS X3, X3, X4		// remainder -= n_divisor;
+11010011011_00000_000001_00010_00010	// 068: LSL X2, X2, #1		// quotient << 1;
+11101011000_11111_000000_00011_11111	// 072: SUBS X31, X3, X31	// Test if remainder < 0
+01010100_0000000000000000101_01011	// 076: B.LT REMAIN_NEGATIVE	// If negative, do else portion.
+1001000100_000000000000_11111_11111	// 080: ADDI X31, X31, #0	// NOOP
+1001000100_000000000001_00010_00010	// 084: ADDI X2, X2, #1		// Quotient++
+000101_00000000000000000000000011	// 088: B DONE_IF_THEN		// Finished the then portion.
+1001000100_000000000000_11111_11111	// 092: ADDI X31, X31, #0	// NOOP
+					//REMAIN_NEGATIVE:
+10101011000_00100_000000_00011_00011	// 096: ADDS X3, X3, X4		// remainder += n_divisor
+					//DONE_IF_THEN:
+11010011010_00000_000001_00100_00100	// 100: LSR X4, X4, #1		// n_divisor >> 1;
+11101011000_00110_000000_00101_00101	// 104: SUBS X5, X5, X6		// Finish the loop: i--;
+10110100_0000000000000000100_00101	// 108: CBZ X5, LOOP_DONE	//   Exit loop when i==0
+1001000100_000000000000_11111_11111	// 112: ADDI X31, X31, #0	//   NOOP
+000101_11111111111111111111110011	// 116: B LOOP_TOP		//   Otherwise continue the loop
+1001000100_000000000000_11111_11111	// 120: ADDI X31, X31, #0	//   NOOP
+					//LOOP_DONE:
+11101011000_11111_000000_00001_11111	// 124: SUBS X31, X1, X31	// Compare divisor to 0
+01010100_0000000000000000111_01011	// 128: B.LT DIVISOR_NEG	// If divisor negative need to fix the sign.
+1001000100_000000000000_11111_11111	// 132: ADDI X31, X31, #0	// NOOP
+11101011000_11111_000000_00000_11111	// 136: SUBS X31, X0, X31	// With positive divisor, is dividend negative?
+01010100_0000000000000001000_01011	// 140: B.LT FLIP_QUOTIENT	// If signs different, negate quotient.
+1001000100_000000000000_11111_11111	// 144: ADDI X31, X31, #0	// NOOP
+000101_00000000000000000000000111	// 148: B DONE			// Divisor and dividend both positive - done.
+1001000100_000000000000_11111_11111	// 152: ADDI X31, X31, #0	// NOOP
+					//DIVISOR_NEG:
+11101011000_00011_000000_11111_00011	// 156: SUBS X3, X31, X3	// remainder *= -1;
+11101011000_11111_000000_00000_11111	// 160: SUBS X31, X0, X31	// Is dividend also negative?
+01010100_0000000000000000011_01011	// 164: B.LT DONE:		// If both negative, don't need to adjust quotient.
+1001000100_000000000000_11111_11111	// 168: ADDI X31, X31, #0	// NOOP
+					//FLIP_QUOTIENT:
+11101011000_00010_000000_11111_00010	// 172: SUBS X2, X31, X2	// quotient *= -1;
+					//DONE:
+									// Self test:
+10011011000_00001_011111_00010_00111	// 176: MUL X7, X2, X1		// X7: temp = quotient * divisor + remainder
+10101011000_00011_000000_00111_00111	// 180: ADDS X7, X7, X3
+1001000100_000000000000_11111_01000	// 184: ADDI X8, X31, #0	// X8: verified - 0=bad, 1=works
+11101011000_00000_000000_00111_11111	// 188: SUBS X31, X7, X0	//   see if temp == dividend
+01010100_0000000000000000101_01011	// 192: B.LT HALT		//   fail if temp < dividend
+11101011000_00111_000000_00000_11111	// 196: SUBS X31, X0, X7
+01010100_0000000000000000011_01011	// 200: B.LT HALT		//   fail if dividend < temp
+1001000100_000000000000_11111_11111	// 204: ADDI X31, X31, #0	// NOOP
+1001000100_000000000001_11111_01000	// 208: ADDI X8, X31, #1	// Only reach here on success.
+					//HALT:
+000101_00000000000000000000000000	// 212: B DONE (0)		// End program.
+1001000100_000000000000_11111_11111	// 216: ADDI X31, X31, #0	// NOOP
